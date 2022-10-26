@@ -2,6 +2,7 @@
   "id": "rituals",
   "name": "Rituals",
   "shortName": "Rituals",
+  "icon": "rituals.jpg",
   "version": "0.01",
   "type": "app",
   "description": "The right steps in the right order",
