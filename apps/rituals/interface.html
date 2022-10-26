@@ -83,7 +83,7 @@
         let jsonRituals = getEditableContent();
         if (isJsonString(jsonRituals)) {
           let shortJsonRituals = JSON.stringify(JSON.parse(jsonRituals));
-          shortJsonRituals = shortJsonRituals.replace("/'", "\'");
+          shortJsonRituals = shortJsonRituals.replace("'", "\'");
           uploadFile(fileRituals, shortJsonRituals);
         } else {
           document.getElementById("info").innerHTML = errorFormat();
