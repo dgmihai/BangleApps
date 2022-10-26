@@ -83,7 +83,7 @@
         let jsonRituals = getEditableContent();
         if (isJsonString(jsonRituals)) {
           let shortJsonRituals = JSON.stringify(JSON.parse(jsonRituals));
-          uploadFile(fileTodoList, shortJsonRituals);
+          uploadFile(fileRituals, shortJsonRituals);
         } else {
           document.getElementById("info").innerHTML = errorFormat();
         }
@@ -99,7 +99,7 @@
             file = new Blob([jsonRituals], { type: "application/json" });
           var url = URL.createObjectURL(file);
           a.href = url;
-          a.download = fileTodoList;
+          a.download = fileRituals;
           document.body.appendChild(a);
           a.click();
           setTimeout(function () {
