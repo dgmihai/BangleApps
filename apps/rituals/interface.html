@@ -81,8 +81,10 @@
         document.getElementById("info").innerHTML = "";
         Util.showModal("Uploading...");
         let jsonRituals = getEditableContent();
+        console.log("jsonRituals", jsonRituals);
         if (isJsonString(jsonRituals)) {
           let shortJsonRituals = JSON.stringify(JSON.parse(jsonRituals));
+          console.log("stringify", shortJsonRituals);
           uploadFile(fileRituals, shortJsonRituals);
         } else {
           document.getElementById("info").innerHTML = errorFormat();
