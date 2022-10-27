@@ -48,7 +48,8 @@ function getTime(add) {
   if (min < 10) min = "0" + min;
   let suffix = t.getHours() < 12 ? " am" : " pm";
   let hour = t.getHours() == 0 ? "12" : t.getHours();
-  return t.getHours() + ":" + min + suffix;
+  hour = hour > 13 ? hour - 12 : hour;
+  return hour + ":" + min + suffix;
 }
 
 function timeFormatted(sec) {
@@ -118,12 +119,12 @@ function redraw() {
   etaFg = '#222222';
   if (pause && rituals[id].acts[idx].time.started) {
     bg = '#FFF5BC';
-    fg = g.theme.fg2;
-    counterFg = g.theme.fg2;
+    fg = '#000000';
+    counterFg = '#000000';
   } else {
-    bg = g.theme.bg2;
-    fg = g.theme.fg2;
-    counterFg = g.theme.fg2;
+    bg = '#C0FCFF';
+    fg = '#000000';
+    counterFg = '#000000';
   }
   if (expired) {
     bg =  '#FFCCCC';
@@ -161,7 +162,7 @@ function showRitual(x) {
   let start = Math.floor(Date.now() / 1000);
   rituals[x + start] = rituals[x];
   id = x + start;
-  ritual[id].time.started = start;
+  rituals[id].time.started = start;
   idx = 0;
   E.showMenu();
   g.clear();
@@ -174,6 +175,7 @@ function showRitual(x) {
   }
   showAct();
   rituals[id].acts[idx].time.started = Math.floor(Date.now() / 1000);
+  initSwipeEvents();
   tick();
   if (!counterInterval)
     counterInterval = setInterval(tick, 1000);
@@ -225,44 +227,41 @@ function showAct() {
     swipe down: show description
     swipe right: previous event
     swipe left: next event */
-var drag = 0;
-Bangle.on("drag", e => {
-  if (!drag) { // start dragging
-    drag = {x: e.x, y: e.y};
-  } else if (!e.b) { // released
-    const dx = e.x-drag.x, dy = e.y-drag.y;
-    drag = null;
-    if (Math.abs(dx)>Math.abs(dy)+10) {
-      if (dx>0) {
-        // right
-        if (idx>0) {
-          rituals[id].acts[idx].status = "incomplete";
-          idx--;
-          showAct();
-        }
-        print("Right")
-      } else {
-        // left
-        rituals[id].acts[idx].status = "completed";
-        idx++;
-        showAct();
-        print("Left")
-      }
-    } else if (Math.abs(dy)>Math.abs(dx)+10) {
-      if (dy>0) {
-        // down
-        print("Down")
-      } else {
-        // up
-        rituals[id].acts[idx].status = "skipped";
-        rituals[id].acts.push(rituals[id].acts[idx]);
-        rituals[id].acts.splice(idx, 1);
-        showAct();
-        print("Up")
-      }
+function initSwipeEvents() {
+  Bangle.removeAllListeners('lock');
+  Bangle.on("swipe", function(directionLR, directionUD) {
+    if (directionLR == 1 && directionUD == 0) {
+      // right
+      rituals[id].acts[idx].status = "incomplete";
+      idx--;
+      showAct();
+      print("Right")
     }
-  }
-});
+    if (directionLR == -1 && directionUD == 0) {
+      // left
+      rituals[id].acts[idx].status = "completed";
+      idx++;
+      showAct();
+      print("Left")
+    }
+    if (directionLR == 0 && directionUD == 1) {
+      // down
+      print("Down")
+    }
+    if (directionLR == 0 && directionUD == -1) {
+      // up
+      rituals[id].acts[idx].status = "skipped";
+      rituals[id].acts.push(rituals[id].acts[idx]);
+      rituals[id].acts.splice(idx, 1);
+      showAct();
+      print("Up")
+    }
+  });
+}
+
+function clearEvents() {
+  Bangle.removeAllListeners('swipe');
+}
 
 function expandRituals(rid) {
   let ret = [];
@@ -282,10 +281,12 @@ for (var id in rituals) {
 }
 
 E.showMenu(m);
+
 setWatch( ()=>{
   clearInterval();
   counterInterval = undefined;
   writeData();
   g.clear();
+  clearEvents();
   E.showMenu(m);
 }, BTN1, {repeat: true});
