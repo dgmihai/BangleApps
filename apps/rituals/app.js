@@ -86,6 +86,7 @@ function tick() {
     rituals[id].time.actual++;
     if (expired) {
       counter = rituals[id].acts[idx].time.expected - rituals[id].acts[idx].time.actual;
+      if (counter % 60 == 0) Bangle.buzz();
     } else {
       counter = rituals[id].acts[idx].time.actual - rituals[id].acts[idx].time.expected;
       if (counter == 0 && rituals[id].acts[idx].time.expected != 0) {
