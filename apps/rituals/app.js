@@ -1,28 +1,106 @@
-// Populate rituals
-let RITUALS_FILE = "rituals.json";
-let RITUALS_DATA_FILE = "rituals_data.json";
+// ===== File I/O =====
 
-let rituals = require("Storage").readJSON(RITUALS_FILE, true);
+const RITUALS_FILE = "rituals.json";
+const RITUALS_DATA_FILE = "rituals_data.json";
 
-function writeData() {
-  require("Storage").writeJSON(RITUALS_DATA_FILE, rituals);
-  print(rituals);
+let data = require("Storage").readJSON(RITUALS_FILE, true);
+let rituals = { acts:{} };
+
+function writeData(name, input) {
+  require("Storage").writeJSON(name, input);
 }
 
-var m = {
-  "": {
-    "title": "Rituals",
-  }
+// ===== States =====
+
+const TStates = {
+  active: 1,
+  paused: 2,
+  expired: 3
 };
+const LStates = {
+  menu: 1,
+  act: 2,
+  description: 3
+};
+let tState = TStates.start;
+let lState = LStates.start;
+let timed = false;
 
-var settings = require('Storage').readJSON("messages.settings.json", true) || {};
+// Timer state
+function setTState(s) {
+  if (s == TStates.active) {
+    tState = (counter <= 0 && timed) ? tState = TStates.expired : tState = TStates.active;
+  } else {
+    tState = s;
+  }
+  if (layout) recolor();
+  draw();
+}
 
-// FONTS
-var fontSmall = "6x8";
-var fontMedium = g.getFonts().includes("6x15")?"6x15":"6x8:2";
-var fontBig = g.getFonts().includes("12x20")?"12x20":"6x8:2";
-var fontLarge = g.getFonts().includes("6x15")?"6x15:2":"6x8:4";
-var fontHuge = g.getFonts().includes("12x20")?"12x20:2":"6x8:5";
+// Layout state
+function setLState(s) {
+  switch (s) {
+    case LStates.act:
+      setTimerLayout();
+      break;
+    case LStates.description:
+      setDescLayout();
+      break;
+    case LStates.menu:
+      break;
+    default:
+      break;
+  }
+}
+
+// ===== Time =====
+
+let counter, counterInterval;
+
+function now() {
+  return Math.floor(Date.now() / 1000);
+}
+
+function getTime(add) {
+  let t = new Date();
+  t.setSeconds(t.getSeconds() + add);
+  let sec = t.getSeconds();
+  let min = t.getMinutes();
+  let hour = t.getHours();
+  min = min < 10 ? "0" + min : min;
+  let suffix = hour < 12 ? " am" : " pm";
+  hour = hour == 0 ? "12" : hour;
+  hour = hour > 13 ? hour - 12 : hour;
+  return hour + ":" + min + suffix;
+}
+
+function timeFormatted(sec) {
+  let prefix = sec > 0 ? "" : "+";
+  sec = Math.abs(sec);
+  let ret = "";
+  let min = Math.floor(sec / 60);
+  sec = sec % 60;
+  let hour = Math.floor(min / 60);
+  min = min % 60;
+  if (sec < 10) {
+    sec = "0" + sec;
+  }
+  if (hour > 0 ) {
+    if (min < 10) {
+      min = "0" + min;
+    }
+    ret = hour + ":";
+  }
+  return prefix + ret + min + ":" + sec;
+}
+
+// ===== Graphics =====
+
+let fontSmall = "6x8";
+let fontMedium = g.getFonts().includes("6x15")?"6x15":"6x8:2";
+let fontBig = g.getFonts().includes("12x20")?"12x20":"6x8:2";
+let fontLarge = g.getFonts().includes("6x15")?"6x15:2":"6x8:4";
+let fontHuge = g.getFonts().includes("12x20")?"12x20:2":"6x8:5";
 
 // hack for 2v10 firmware's lack of ':size' font handling
 try {
@@ -38,194 +116,305 @@ try {
   };
 }
 
-// TIMER
-var counter, counterInterval, expired, pause;
+let btnPause = {type:"btn", src:atob("EhKCAP/wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP/w=="), cb: l=>{
+  pause();
+}};
+let btnPlay = {type:"btn", src:atob("EhKCAPAAAAAP8AAAAP/wAAAP//AAAP//8AAP///wAP////AP////8P////////////////8P////AP///wAP//8AAP//AAAP/wAAAP8AAAAPAAAAAA=="), cb: l=>{
+  play();
+}};
+let btns = [ {}, {}, btnPlay, {}, {} ];
 
-function getTime(add) {
-  let t = new Date();
-  t.setSeconds(t.getSeconds() + add);
-  min = t.getMinutes();
-  if (min < 10) min = "0" + min;
-  let suffix = t.getHours() < 12 ? " am" : " pm";
-  let hour = t.getHours() == 0 ? "12" : t.getHours();
-  hour = hour > 13 ? hour - 12 : hour;
-  return hour + ":" + min + suffix;
+var Layout = require("Layout");
+let layout, timerLayout, descLayout;
+let l = { timer:"", eta:"", fg:"", bg:""}
+
+function draw(item) {
+  if (item) {
+    layout.clear(item);
+    layout.render(item);
+  } else {
+    layout.clear();
+    layout.render();
+  }
 }
 
-function timeFormatted(sec) {
-  sec = Math.abs(sec);
-  var ret = "";
-  var min = Math.floor(sec / 60);
-  sec = sec % 60;
-  var hour = Math.floor(min / 60);
-  min = min % 60;
-  if (sec < 10) {
-    sec = "0" + sec;
-  }
-  if (hour > 0) {
-    if (min < 10) {
-      min = "0" + min;
+function setTimerLayout() {
+  if (!timerLayout) {
+    timerLayout = {
+      type:"v", c: [
+        {type:"h", fillx:1, c: [
+          {type:"v", fillx:1, c: [
+            {type:"txt", id:"upper",
+              font:fontSmall,
+              fillx:1, pad:2, halign:1 },
+            {type:"txt", id:"title",
+              height:"44", fillx:1, pad:2 },
+          ]},
+        ]},
+        {type:"txt", id:"timer",
+          font:fontHuge,
+          fillx:1, filly:1, pad:2},
+        {type:"txt", id:"eta",
+          font:fontBig,
+          col:"#222222",
+          fillx:1, filly:1, pad:2},
+        {type:"h", id:"buttons", c: btns }
+      ]
     }
-    ret = hour + ":";
   }
-  return ret + min + ":" + sec;
+  layout = new Layout(timerLayout);
+  layout.upper.label = currRit.n;
+  layout.title.label = currAct.n;
+  recolor();
+  if (timed) {
+    layout.timer.col = "#000000";
+  } else {
+    layout.timer.col = "#222222";
+  }
+  let w = g.getWidth(), lines;
+  layout.title.font = fontHuge;
+  if (g.setFont(layout.title.font).stringWidth(layout.title.label) > w) {
+    layout.title.font = fontBig;
+    if (g.setFont(layout.title.font).stringWidth(layout.title.label) > w*2) {
+      layout.title.font = fontMedium;
+    }
+  }
+  if (g.setFont(layout.title.font).stringWidth(layout.title.label) > w) {
+    lines = g.wrapString(layout.title.label, w);
+    layout.title.label = (lines.length>2) ? lines.slice(0,2).join("\n")+"..." : lines.join("\n");
+  }
+  g.clear();
+  draw();
+}
+
+function setDescLayout() {
+  if (!descLayout) {
+    descLayout = {
+      type:"v", c: [
+        {type:"h", fillx:1, c: [
+          {type:"v", fillx:1, c: [
+            {type:"txt", id:"upper",
+              label:currAct.n,
+              font:fontSmall,
+              fillx:1, pad:2, halign:1 },
+            {type:"txt", id:"timer",
+              label:l.timer,
+              font:fontMedium,
+              height:"44", fillx:1, pad:2 },
+          ]},
+        ]},
+        {type:"txt", id:"body",
+          label:currAct.d,
+          fillx:1, filly:1, pad:2},
+        {type:"h", id:"buttons", fillx:1, c: btns }
+      ]
+    }
+  }
+  layout = new Layout(descLayout);
+  recolor();
+  if (timed) {
+    layout.title.col = "#000000";
+  } else {
+    layout.title.col = "#222222";
+  }
+  let w = g.getWidth()-10;
+  if (g.setFont(layout.body.font).stringWidth(layout.body.label) > w) {
+    layout.body.font = fontBig;
+    if (g.setFont(layout.body.font).stringWidth(layout.body.label) > w * 2)
+      layout.body.font = fontMedium;
+  }
+  if (g.setFont(layout.body.font).stringWidth(layout.body.label) > w) {
+    lines = g.setFont(layout.body.font).wrapString(layout.body.label, w);
+    var maxLines = Math.floor((g.getHeight()-110) / g.getFontHeight());
+    layout.body.label = (lines.length>maxLines) ? lines.slice(0,maxLines).join("\n")+"..." : lines.join("\n");
+  }
+  g.clear();
+  draw();
+}
+
+function recolor() {
+  // Colors
+  switch(tState) {
+    case TStates.active:
+      if (timed) {
+        l.bg = '#CAFFFF';
+        l.fg = '#000000';
+      } else {
+        l.bg = '#CAFFFF';
+        l.fg = '#222222';
+      }
+      break;
+    case TStates.paused:
+      l.bg = '#FFFFE0';
+      l.fg = '#222222';
+      break;
+    case TStates.expired:
+      l.bg = '#ff4d4d';
+      l.fg = '#cc0000';
+      break;
+    default:
+      l.bg = '#00FFFF';
+      l.fg = '#000000';
+      break;
+  }
+  layout.upper.bgCol = l.bg;
+  layout.title.bgCol = l.bg;
+  layout.timer.col = l.fg;
+}
+
+// ==== Update Act and Ritual =====
+
+function updateRit() {
+  if (!rituals.acts[currAct.pt]) {
+    rituals.acts[currAct.pt] = data.acts[currAct.pt];
+    if (!rituals.acts[currAct.pt].ti)
+      rituals.acts[currAct.pt].ti = {};
+  }
+  currRit = rituals.acts[currAct.pt];
+  if (!currRit.ti.s) currRit.ti.s = now();
+}
+
+function updateAct() {
+  if (queue[idx]) {
+    currAct = rituals.acts[queue[idx]];
+    if (currRit) {
+      if (currAct.pt != currRit.id) {
+        currRit.s = "incomplete";
+        updateRit();
+      }
+    } else updateRit();
+    timed = currAct.ti.est ? true : false;
+    setTimerLayout();
+    play();
+  } else {
+    clearInterval();
+    counterInterval = undefined;
+    g.clear();
+    E.showMessage("COMPLETE! :)");  
+  }
+  writeData();
+}
+
+// ==== Update =====
+
+function pause() {
+  btns[2] = btnPlay;
+  currAct.s = "incomplete";
+  updateTimer();
+  layout.update()
+  setTState(TStates.paused);
+}
+
+function play() {
+  if (!currAct.ti.s) {
+    currAct.ti.s = now();
+  }
+  btns[2] = btnPause;
+  currAct.s = "active";
+  updateTimer();
+  layout.update()
+  setTState(TStates.active);
 }
 
 function tick() {
-  if (pause) {
-    if (rituals[id].acts[idx].time.started) {
-      rituals[id].acts[idx].time.paused++;
-      rituals[id].time.paused++;
-    }
-  } else {
-    if (!rituals[id].acts[idx].time.started) {
-      rituals[id].acts[idx].time.started = Math.floor(Date.now() / 1000);
-      rituals[id].acts[idx].status = "active";
-    }
-    rituals[id].acts[idx].time.actual++;
-    rituals[id].time.actual++;
-    if (expired) {
-      counter = rituals[id].acts[idx].time.expected - rituals[id].acts[idx].time.actual;
+  switch(tState) {
+    case TStates.active:
+      currAct.ti.et++;
+      remaining--;
+      break;
+    case TStates.paused:
+      currAct.ti.p++;
+      break;
+    case TStates.expired:
+      currAct.ti.et++;
+      break;
+  }
+  updateTimer();
+  switch(tState) {
+    case TStates.active:
+      if (counter % 300 == 0) Bangle.buzz();
+      break;
+    case TStates.expired:
       if (counter % 60 == 0) Bangle.buzz();
-    } else {
-      counter = rituals[id].acts[idx].time.actual - rituals[id].acts[idx].time.expected;
-      if (counter == 0 && rituals[id].acts[idx].time.expected != 0) {
-        Bangle.buzz();
-        expired = true;
-      }
+      break;
+  }
+}
+
+function updateTimer() {
+  counter = currAct.ti.est - currAct.ti.et;
+  l.timer = timeFormatted(counter);
+  l.eta = getTime(remaining);
+  layout.timer.label = l.timer;
+  draw(layout.timer);
+  if (layout.eta) {
+    layout.eta.label = l.eta;
+    draw(layout.eta);
+  }
+  if (counter <= 0 && timed)
+    setTState(TStates.active);
+}
+
+// ===== Init Ritual =====
+
+let currAct, currRit, idx, queue, currActs, remaining=0;
+let queues = [ undefined, [], [], [], [] ];
+let etas = [ undefined, 0, 0, 0, 0 ];
+function createQueues(actId, pri) {
+  print("Input Pri: " + pri)
+  let act = data.acts[actId];
+  print("Act Pri: " + act.py)
+  print(act.py - pri)
+  print(act.n)
+  rituals.acts[actId] = act;
+  if (!act.ti) act.ti = { et:0, est:0, p:0 };
+  if (!act.ti.et) act.ti.et = 0;
+  if (!act.ti.est) act.ti.est = 0;
+  if (!act.ti.p) act.ti.p = 0;
+  print(4 - act.py + pri)
+  if (act.i) {
+    createQueues(act.i, 4 - act.py + pri);
+  } else if (!act.ty) { // TODO: Hide vs other types
+  for (i = Math.max(act.py-pri, 1); i > 0; i--) {
+      print("Adding to priority queue " + i)
+      queues[i].push(actId);
+      etas[i] += parseInt(act.ti.est);
     }
   }
-  redraw();
+  if (act.x) {
+    createQueues(act.x, pri);
+  }
 }
 
-// GRAPHICS
-var layout, btn, upperText, titleText, titleFont, counterText, etaText;
-var btnPause = {type:"btn", src:atob("EhKCAP/wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP///wAP/w=="), cb: l=>{
-  pause = true;
-  rituals[id].acts[idx].status = "incomplete";
-  redraw();
-}};
-var btnPlay = {type:"btn", src:atob("EhKCAPAAAAAP8AAAAP/wAAAP//AAAP//8AAP///wAP////AP////8P////////////////8P////AP///wAP//8AAP//AAAP/wAAAP8AAAAPAAAAAA=="), cb: l=>{
-  pause = false;
-  rituals[id].acts[idx].status = "active";
-  redraw();
-}};
-
-function redraw() {
-  let fg, bg, counterFg, etaFg;
-  btn = pause ? btnPlay : btnPause;
-  if (layout != undefined)
-    layout.clear();
-  // Colors
-  etaFg = '#222222';
-  if (pause && rituals[id].acts[idx].time.started) {
-    bg = '#FFF5BC';
-    fg = '#000000';
-    counterFg = '#000000';
-  } else {
-    bg = '#C0FCFF';
-    fg = '#000000';
-    counterFg = '#000000';
-  }
-  if (expired) {
-    bg =  '#FFCCCC';
-    counterFg = '#F00000';
-  }
-  if (rituals[id].acts[idx].time.expected == 0) {
-    counterFg = '#222222';
-    etaText = timeFormatted(counter);
-    counterText = getTime(0);
-  } else {
-    counterText = timeFormatted(counter);
-    etaText = getTime(rituals[id].time.expected - rituals[id].time.actual);
-  }
-
-  // Layout
-  var Layout = require("Layout");
-  layout = new Layout( {
-    type:"v", c: [
-    {type:"h", fillx:1, c: [
-      {type:"v", fillx:1, c: [
-        {type:"txt", id:"upper", font:fontSmall, label:upperText, bgCol:bg, col: fg, fillx:1, pad:2, halign:1 },
-        {type:"txt", id:"title", font:titleFont, height:"44", label:titleText, bgCol:bg, col: fg, fillx:1, pad:2 },
-      ]},
-    ]},
-    {type:"txt", id:"counter", font:fontHuge, label:counterText, col:counterFg, fillx:1, filly:1, pad:2},
-    {type:"txt", id:"eta", font:fontBig, label:etaText, col:etaFg, fillx:1, filly:1, pad:2},
-    {type:"h", id:"buttons", fillx:1, c: [ btn ] }
-  ]}, {lazy:true});
-  layout.render();
-}
-
-// Show
-var idx, id, t_remaining;
-function showRitual(x) {
-  let start = Math.floor(Date.now() / 1000);
-  rituals[x + start] = rituals[x];
-  id = x + start;
-  rituals[id].time.started = start;
-  idx = 0;
+function startRitual(id, priority) {
   E.showMenu();
-  g.clear();
   E.showMessage("Loading...");
-  rituals[id].acts = expandRituals(id);
-  for (let x in rituals[id].acts) {
-    if (rituals[id].acts[x].duration) {
-      rituals[id].time.expected = rituals[id].acts[x].time.expected + rituals[id].time.expected;
-    }
-  }
-  showAct();
-  rituals[id].acts[idx].time.started = Math.floor(Date.now() / 1000);
+  print("Pri: " + priority)
+  print("ID: " + id)
+  rituals.sync_token = data.sync_token;
+  idx = 0;
+  queue = queues[priority];
   initSwipeEvents();
+  setWatch( ()=>{
+    clearInterval();
+    counterInterval = undefined;
+    writeData();
+    g.clear();
+    clearEvents();
+    back();
+  }, BTN1, {repeat: true});
+  g.clear();
+  updateAct();
   tick();
   if (!counterInterval)
     counterInterval = setInterval(tick, 1000);
 }
 
-function showAct() {
-  pause = false;
-  if (rituals[id].acts.length > idx) {
-    rituals[id].status = "active";
-    upperText = rituals[id].name;
-    titleText = rituals[id].acts[idx].name;
-    duration = rituals[id].acts[idx].duration;
-    elapsed = rituals[id].acts[idx].elapsed;
-    elapsedPause = rituals[id].acts[idx].elapsedPause;
-    if (!rituals[id].acts[idx].time) rituals[id].acts[idx].time = { actual:0, expected:0, paused:0 };
-    else {
-      if (!rituals[id].acts[idx].time.actual) rituals[id].acts[idx].time.actual = 0;
-      if (!rituals[id].acts[idx].time.expected) rituals[id].acts[idx].time.expected = 0;
-      if (!rituals[id].acts[idx].time.paused) rituals[id].acts[idx].time.paused = 0;
-    }
-    let diff = rituals[id].acts[idx].time.actual - rituals[id].acts[idx].time.expected;
-    expired = (rituals[id].acts[idx].time.expected != 0 && diff > 0) ? true : false;
-    counter = expired ? diff : rituals[id].acts[idx].time.expected - rituals[id].acts[idx].time.actual;
-    // Set font sizes
-    let w = g.getWidth(), lines;
-    titleFont = fontHuge;
-    if (g.setFont(titleFont).stringWidth(titleText) > w) {
-      titleFont = fontBig;
-      if (settings.fontSize!=1 && g.setFont(titleFont).stringWidth(titleText) > w*2) {
-        titleFont = fontMedium;
-      }
-    }
-    if (g.setFont(titleFont).stringWidth(titleText) > w) {
-      lines = g.wrapString(titleText, w);
-      titleText = (lines.length>2) ? lines.slice(0,2).join("\n")+"..." : lines.join("\n");
-    }
-    redraw();
-  } else {
-    clearInterval();
-    counterInterval = undefined;
-    g.clear();
-    E.showMessage("COMPLETE! :)");
-    writeData();
-  }
-}
+// ===== Input Events =====
 
 /* Navigate by swiping
     swipe up: skip
     swipe down: show description
+      if description: swipe up, return
     swipe right: previous event
     swipe left: next event */
 function initSwipeEvents() {
@@ -233,28 +422,34 @@ function initSwipeEvents() {
   Bangle.on("swipe", function(directionLR, directionUD) {
     if (directionLR == 1 && directionUD == 0) {
       // right
-      rituals[id].acts[idx].status = "incomplete";
+      currAct.s = "incomplete";
       idx--;
-      showAct();
+      updateAct();
       print("Right")
     }
     if (directionLR == -1 && directionUD == 0) {
       // left
-      rituals[id].acts[idx].status = "completed";
+      currAct.s = "completed";
       idx++;
-      showAct();
+      updateAct();
       print("Left")
     }
     if (directionLR == 0 && directionUD == 1) {
       // down
+      if (currAct.d) {
+        //setLState(LStates.description); TODO
+      }
       print("Down")
     }
     if (directionLR == 0 && directionUD == -1) {
       // up
-      rituals[id].acts[idx].status = "skipped";
-      rituals[id].acts.push(rituals[id].acts[idx]);
-      rituals[id].acts.splice(idx, 1);
-      showAct();
+      if (lState == LStates.description) {
+        setLState(LStates.act);
+      } else if (lState == LStates.act) {
+        currAct.s = "skipped";
+        idx++;
+        updateAct();
+      }
       print("Up")
     }
   });
@@ -264,30 +459,69 @@ function clearEvents() {
   Bangle.removeAllListeners('swipe');
 }
 
-function expandRituals(rid) {
-  let ret = [];
-  for (let x in rituals[rid].acts) {
-    if (!rituals[rid].acts[x].ritual) ret.push(rituals[rid].acts[x]);
-    if (rituals[rid].acts[x].next) ret = ret.concat(expandRituals(rituals[rid].acts[x].next));
-  }
-  return ret;
-}
+// ===== Menu =====
 
-for (var id in rituals) {
-  const rid = id;
-  rituals[id].time = { expected: 0 };
-  m[rituals[rid].name] = () => {
-    showRitual(String(rid));
+var m = {};
+let menuLayer = [];
+function resetMenu() {
+  E.showMenu();
+  //setLState(LStates.menu);
+  m = {
+    '': {
+    }
   };
 }
 
-E.showMenu(m);
-
-setWatch( ()=>{
-  clearInterval();
-  counterInterval = undefined;
-  writeData();
-  g.clear();
-  clearEvents();
+function menuHeadings() {
+  resetMenu();
+  for (let hid of Object.keys(data.hdgs)) {
+    const h = hid;
+    m[data.hdgs[h].n] = ()=>{
+      menuLayer.unshift(String(h));
+      menuRitual(String(h));
+      print(menuLayer)
+    };
+  }
   E.showMenu(m);
-}, BTN1, {repeat: true});
+}
+
+function menuRitual(id) {
+  resetMenu();
+  for (let rid of data.hdgs[id].rs) {
+    const r = rid;
+    m[data.acts[r].n] = ()=>{
+      menuLayer.unshift(r);
+      menuTimes(r);
+    };
+  }
+  m['']['title'] = data.hdgs[id].n;
+  m['']['back'] = ()=>{ back(); }
+  E.showMenu(m);
+}
+
+function menuTimes(id) {
+  resetMenu();
+  E.showMessage("Loading...");
+  createQueues(data.acts[id].x, 0);
+  const r = id;
+  for (i=1; i < 5; i++) {
+    print("I: " + i)
+    const k = i;
+    if (etas[i]) {
+      m[getTime(etas[k]) + ", " + timeFormatted(etas[k])] = ()=>{ startRitual(r, k); remaining = etas[k]; }
+    }  
+  }
+  m['']['back'] = ()=>{ back(); }
+  E.showMenu(m);
+}
+
+function back() {
+  queues = [ undefined, [], [], [], [] ];
+  etas = [ undefined, 0, 0, 0, 0 ];
+  remaining = 0;
+  queue = [];
+  menuLayer = [];
+  menuHeadings();
+}
+
+menuHeadings();
