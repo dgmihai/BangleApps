@@ -12,15 +12,22 @@ function writeData(name, input) {
 
 // ===== States =====
 
-const TStates = {
+const TStates = { // Timer states
   active: 1,
   paused: 2,
   expired: 3
 };
-const LStates = {
+const LStates = { // Layout states
   menu: 1,
   act: 2,
   description: 3
+};
+const AStates = { // Act states
+  active: 1,
+  completed: 2,
+  incomplete: 3,
+  skipped: 4,
+  alreadyDone: 5
 };
 let tState = TStates.start;
 let lState = LStates.start;
@@ -69,29 +76,33 @@ function getTime(add) {
   let hour = t.getHours();
   min = min < 10 ? "0" + min : min;
   let suffix = hour < 12 ? " am" : " pm";
-  hour = hour == 0 ? "12" : hour;
-  hour = hour > 13 ? hour - 12 : hour;
+  hour = hour == 0 ? 12 : hour;
+  hour = hour > 12 ? hour - 12 : hour;
   return hour + ":" + min + suffix;
 }
 
-function timeFormatted(sec) {
+function formatTimespan(sec, hm) {
   let prefix = sec > 0 ? "" : "+";
   sec = Math.abs(sec);
   let ret = "";
   let min = Math.floor(sec / 60);
-  sec = sec % 60;
   let hour = Math.floor(min / 60);
-  min = min % 60;
-  if (sec < 10) {
-    sec = "0" + sec;
+  min = hm ? min % 60 + "m" : min % 60;
+  if (!hm) {
+    sec = sec % 60;
+    if (sec < 10) {
+      sec = "0" + sec;
+    }
   }
   if (hour > 0 ) {
     if (min < 10) {
       min = "0" + min;
     }
-    ret = hour + ":";
+    ret = hm ? hour + "h" : hour + ":";
   }
-  return prefix + ret + min + ":" + sec;
+  ret = prefix + ret + min;
+  ret = hm ? ret : ret + ":" + sec;
+  return ret;
 }
 
 // ===== Graphics =====
@@ -126,7 +137,7 @@ let btns = [ {}, {}, btnPlay, {}, {} ];
 
 var Layout = require("Layout");
 let layout, timerLayout, descLayout;
-let l = { timer:"", eta:"", fg:"", bg:""}
+let l = { timer:"", eta:"", fg:"", bg:""};
 
 function draw(item) {
   if (item) {
@@ -160,7 +171,7 @@ function setTimerLayout() {
           fillx:1, filly:1, pad:2},
         {type:"h", id:"buttons", c: btns }
       ]
-    }
+    };
   }
   layout = new Layout(timerLayout);
   layout.upper.label = currRit.n;
@@ -208,7 +219,7 @@ function setDescLayout() {
           fillx:1, filly:1, pad:2},
         {type:"h", id:"buttons", fillx:1, c: btns }
       ]
-    }
+    };
   }
   layout = new Layout(descLayout);
   recolor();
@@ -234,7 +245,7 @@ function setDescLayout() {
 
 function recolor() {
   // Colors
-  switch(tState) {
+  switch (tState) {
     case TStates.active:
       if (timed) {
         l.bg = '#CAFFFF';
@@ -275,15 +286,33 @@ function updateRit() {
 }
 
 function updateAct() {
+  // Prev act
+  if (timed) {
+    counter = currAct.ti.est - currAct.ti.et;
+    if (currAct.s == AStates.completed || currAct.s == AStates.skipped) {
+      if (counter > 0) {
+        remaining -= counter;
+      }
+    }
+  }
   if (queue[idx]) {
     currAct = rituals.acts[queue[idx]];
+    timed = currAct.ti.est ? true : false;
+    // Next act
+    if (timed) {
+      counter = currAct.ti.est - currAct.ti.et;
+      if (currAct.s == AStates.completed || currAct.s == AStates.skipped) {
+        if (counter > 0) {
+          remaining += counter;
+        }
+      }
+    }
     if (currRit) {
       if (currAct.pt != currRit.id) {
-        currRit.s = "incomplete";
+        currRit.s = AStates.incomplete;
         updateRit();
       }
     } else updateRit();
-    timed = currAct.ti.est ? true : false;
     setTimerLayout();
     play();
   } else {
@@ -299,7 +328,7 @@ function updateAct() {
 
 function pause() {
   btns[2] = btnPlay;
-  currAct.s = "incomplete";
+  currAct.s = AStates.incomplete;
   updateTimer();
   layout.update()
   setTState(TStates.paused);
@@ -310,14 +339,14 @@ function play() {
     currAct.ti.s = now();
   }
   btns[2] = btnPause;
-  currAct.s = "active";
+  currAct.s = AStates.active;
   updateTimer();
   layout.update()
   setTState(TStates.active);
 }
 
 function tick() {
-  switch(tState) {
+  switch (tState) {
     case TStates.active:
       currAct.ti.et++;
       remaining--;
@@ -330,7 +359,7 @@ function tick() {
       break;
   }
   updateTimer();
-  switch(tState) {
+  switch (tState) {
     case TStates.active:
       if (counter % 300 == 0) Bangle.buzz();
       break;
@@ -342,7 +371,7 @@ function tick() {
 
 function updateTimer() {
   counter = currAct.ti.est - currAct.ti.et;
-  l.timer = timeFormatted(counter);
+  l.timer = formatTimespan(counter);
   l.eta = getTime(remaining);
   layout.timer.label = l.timer;
   draw(layout.timer);
@@ -360,22 +389,16 @@ let currAct, currRit, idx, queue, currActs, remaining=0;
 let queues = [ undefined, [], [], [], [] ];
 let etas = [ undefined, 0, 0, 0, 0 ];
 function createQueues(actId, pri) {
-  print("Input Pri: " + pri)
   let act = data.acts[actId];
-  print("Act Pri: " + act.py)
-  print(act.py - pri)
-  print(act.n)
   rituals.acts[actId] = act;
   if (!act.ti) act.ti = { et:0, est:0, p:0 };
   if (!act.ti.et) act.ti.et = 0;
   if (!act.ti.est) act.ti.est = 0;
   if (!act.ti.p) act.ti.p = 0;
-  print(4 - act.py + pri)
   if (act.i) {
     createQueues(act.i, 4 - act.py + pri);
   } else if (!act.ty) { // TODO: Hide vs other types
   for (i = Math.max(act.py-pri, 1); i > 0; i--) {
-      print("Adding to priority queue " + i)
       queues[i].push(actId);
       etas[i] += parseInt(act.ti.est);
     }
@@ -388,8 +411,6 @@ function createQueues(actId, pri) {
 function startRitual(id, priority) {
   E.showMenu();
   E.showMessage("Loading...");
-  print("Pri: " + priority)
-  print("ID: " + id)
   rituals.sync_token = data.sync_token;
   idx = 0;
   queue = queues[priority];
@@ -404,7 +425,6 @@ function startRitual(id, priority) {
   }, BTN1, {repeat: true});
   g.clear();
   updateAct();
-  tick();
   if (!counterInterval)
     counterInterval = setInterval(tick, 1000);
 }
@@ -422,14 +442,14 @@ function initSwipeEvents() {
   Bangle.on("swipe", function(directionLR, directionUD) {
     if (directionLR == 1 && directionUD == 0) {
       // right
-      currAct.s = "incomplete";
+      currAct.s = AStates.incomplete;
       idx--;
       updateAct();
       print("Right")
     }
     if (directionLR == -1 && directionUD == 0) {
       // left
-      currAct.s = "completed";
+      currAct.s = AStates.completed;
       idx++;
       updateAct();
       print("Left")
@@ -446,7 +466,7 @@ function initSwipeEvents() {
       if (lState == LStates.description) {
         setLState(LStates.act);
       } else if (lState == LStates.act) {
-        currAct.s = "skipped";
+        currAct.s = AStates.skipped;
         idx++;
         updateAct();
       }
@@ -479,7 +499,6 @@ function menuHeadings() {
     m[data.hdgs[h].n] = ()=>{
       menuLayer.unshift(String(h));
       menuRitual(String(h));
-      print(menuLayer)
     };
   }
   E.showMenu(m);
@@ -505,10 +524,9 @@ function menuTimes(id) {
   createQueues(data.acts[id].x, 0);
   const r = id;
   for (i=1; i < 5; i++) {
-    print("I: " + i)
     const k = i;
     if (etas[i]) {
-      m[getTime(etas[k]) + ", " + timeFormatted(etas[k])] = ()=>{ startRitual(r, k); remaining = etas[k]; }
+      m[getTime(etas[k]) + ", " + formatTimespan(etas[k], true)] = ()=>{ remaining = etas[k]; startRitual(r, k); }
     }  
   }
   m['']['back'] = ()=>{ back(); }
